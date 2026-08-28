@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import gspread
+import json
 from google.oauth2.service_account import Credentials
 import plotly.express as px
 
@@ -16,20 +17,22 @@ def load_data():
         "https://www.googleapis.com/auth/drive"
     ]
     
-    # Cloud check: Use Streamlit Secrets if available
-    if "gcp_service_account" in st.secrets:
+    # Check if raw JSON string secret is present
+    if "gcp_raw_json" in st.secrets:
+        creds_dict = json.loads(st.secrets["gcp_raw_json"])
+        credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
+        gc = gspread.authorize(credentials)
+    elif "gcp_service_account" in st.secrets:
         creds_dict = dict(st.secrets["gcp_service_account"])
         credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
         gc = gspread.authorize(credentials)
     else:
-        # Local fallback
         gc = gspread.service_account(filename="credentials.json")
         
     sheet = gc.open("SOAP_Daily_Logs").sheet1
     records = sheet.get_all_records()
     df = pd.DataFrame(records)
 
-    # Ensure Current Date is parsed cleanly
     df["Parsed Date"] = pd.to_datetime(df["Current Date"], errors="coerce")
     return df
 
