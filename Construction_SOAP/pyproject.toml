@@ -1,7 +1,0 @@
-[project]
-name = "construction-soap"
-version = "0.1.0"
-requires-python = ">=3.11"
-dependencies = [
-    "pandas-stubs~=3.0.5",
-]
