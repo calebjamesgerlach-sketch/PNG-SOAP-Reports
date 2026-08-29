@@ -129,7 +129,7 @@ with tab_soap:
         display_df = filtered_df.sort_values(by="Parsed Date", ascending=False)
         for idx, row in display_df.iterrows():
             report_title = f"📅 {row.get('Current Date', 'N/A')} — {row.get('Project Name', 'Unknown')} (Inspector/Lead: {row.get('Name and Title', 'Unknown')})"
-            with st.expander(report_title, expanded=(selected_date != "All Dates")):
+            with st.expander(report_title, expanded=(selected_report != "All Entries")):
                 c1, c2, c3 = st.columns(3)
                 c1.write(f"**Location:** {row.get('Location Address', 'N/A')}")
                 c2.write(f"**Travel Time:** {row.get('Travel Time', 'N/A')}")
