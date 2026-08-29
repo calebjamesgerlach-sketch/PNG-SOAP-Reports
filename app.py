@@ -86,21 +86,32 @@ st.sidebar.header("Navigation & Filters")
 project_list = ["All"] + sorted([p for p in df["Project Name"].dropna().unique() if str(p).strip()])
 selected_project = st.sidebar.selectbox("Select Project (Umbrella)", project_list)
 
-# Filter by selected project first
+# Filter by selected project first (using .copy() to prevent Pandas warnings)
 if selected_project == "All":
-    project_df = df
+    project_df = df.copy()
 else:
-    project_df = df[df["Project Name"] == selected_project]
+    project_df = df[df["Project Name"] == selected_project].copy()
 
-# Date/Report selector within the selected project
-report_dates = ["All Dates"] + sorted(project_df["Current Date"].dropna().astype(str).unique().tolist(), reverse=True)
-selected_date = st.sidebar.selectbox("Filter Specific Daily Log", report_dates)
+# Sort most recent first
+project_df = project_df.sort_values(by="Parsed Date", ascending=False)
 
-if selected_date != "All Dates":
-    filtered_df = project_df[project_df["Current Date"].astype(str) == selected_date]
+# Build a unique label for every report using existing columns + row index
+project_df["Report_Display_Label"] = (
+    project_df["Current Date"].astype(str) + 
+    " — " + 
+    project_df.get("Name and Title", "Field Lead").astype(str) + 
+    " (Log #" + project_df.index.astype(str) + ")"
+)
+
+# Populate dropdown options
+report_options = ["All Entries"] + project_df["Report_Display_Label"].tolist()
+selected_report = st.sidebar.selectbox("Filter Specific Daily Log", report_options)
+
+# Apply child log filter
+if selected_report != "All Entries":
+    filtered_df = project_df[project_df["Report_Display_Label"] == selected_report]
 else:
     filtered_df = project_df
-
 # Tab Navigation
 tab_soap, tab_umbrella_summary, tab_analytics, tab_raw = st.tabs([
     "📋 Daily SOAP Entries",
