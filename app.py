@@ -86,7 +86,7 @@ dashboard_view = st.radio(
 st.markdown("---")
 
 # =========================================================
-# DASHBOARD 1: ANALYTICS (Current Master Dashboard)
+# DASHBOARD 1: ANALYTICS (Master Roll-up & CQI Dashboard)
 # =========================================================
 if dashboard_view == "📊 Analytics":
     # Macro KPIs
@@ -111,7 +111,7 @@ if dashboard_view == "📊 Analytics":
 
     st.markdown("---")
 
-    # Sidebar Filters
+    # Sidebar Filter: Project Umbrella
     st.sidebar.header("Navigation & Filters")
     project_list = ["All"] + sorted([p for p in df["Project Name"].dropna().unique() if str(p).strip()])
     selected_project = st.sidebar.selectbox("Select Project (Umbrella)", project_list)
@@ -121,49 +121,12 @@ if dashboard_view == "📊 Analytics":
     else:
         project_df = df[df["Project Name"] == selected_project].copy()
 
-    project_df = project_df.sort_values(by="Parsed Date", ascending=False)
-    project_df["Report_Display_Label"] = (
-        project_df["Current Date"].astype(str) + 
-        " — " + 
-        project_df.get("Name and Title", "Field Lead").astype(str) + 
-        " (Log #" + project_df.index.astype(str) + ")"
-    )
-
-    report_options = ["All Entries"] + project_df["Report_Display_Label"].tolist()
-    selected_report = st.sidebar.selectbox("Filter Specific Daily Log", report_options)
-
-    if selected_report != "All Entries":
-        filtered_df = project_df[project_df["Report_Display_Label"] == selected_report]
-    else:
-        filtered_df = project_df
-
-    # Tabs
-    tab_soap, tab_umbrella_summary, tab_analytics, tab_raw = st.tabs([
-        "📋 Daily SOAP Entries",
+    # Tabs (Daily SOAP tab removed)
+    tab_umbrella_summary, tab_analytics, tab_raw = st.tabs([
         "🏢 Project Master Roll-Up",
         "📊 CQI Analytics",
         "📁 Raw Data Table"
     ])
-
-    with tab_soap:
-        st.subheader("Daily Field Logs")
-        if filtered_df.empty:
-            st.info("No daily reports found for this selection.")
-        else:
-            display_df = filtered_df.sort_values(by="Parsed Date", ascending=False)
-            for idx, row in display_df.iterrows():
-                report_title = f"📅 {row.get('Current Date', 'N/A')} — {row.get('Project Name', 'Unknown')} (Inspector/Lead: {row.get('Name and Title', 'Unknown')})"
-                with st.expander(report_title, expanded=(selected_report != "All Entries")):
-                    c1, c2, c3 = st.columns(3)
-                    c1.write(f"**Location:** {row.get('Location Address', 'N/A')}")
-                    c2.write(f"**Travel Time:** {row.get('Travel Time', 'N/A')}")
-                    c3.write(f"**Man Hours:** {row.get('Man Hours', 'N/A')} hrs")
-
-                    st.markdown("#### SOAP Breakdown")
-                    st.info(f"**S (Subjective - Crew reports, delays, concerns):**\n{row.get('Subjective', 'No entries logged.')}")
-                    st.write(f"**O (Objective - Work completed, quantities, deliveries):**\n{row.get('Objective', 'No entries logged.')}")
-                    st.warning(f"**A (Assessment - Quality control, safety issues, compliance):**\n{row.get('Assessment', 'No entries logged.')}")
-                    st.success(f"**P (Plan - Next day targets, trades needed):**\n{row.get('Plan', 'No entries logged.')}")
 
     with tab_umbrella_summary:
         if selected_project == "All":
@@ -270,7 +233,7 @@ if dashboard_view == "📊 Analytics":
 
     with tab_raw:
         st.subheader("Raw Submission Table")
-        st.dataframe(filtered_df, use_container_width=True)
+        st.dataframe(project_df, use_container_width=True)
 
 
 # =========================================================
