@@ -139,7 +139,6 @@ if dashboard_view == "📊 Analytics":
 
     # Tabs
     tab_soap, tab_umbrella_summary, tab_analytics, tab_raw = st.tabs([
-        "📋 Daily SOAP Entries",
         "🏢 Project Master Roll-Up",
         "📊 CQI Analytics",
         "📁 Raw Data Table"
