@@ -53,26 +53,40 @@ with st.spinner("Connecting to Google Sheets..."):
         st.stop()
 
 
-# --- Shared Helpers & Calculations ---
-def count_tools(series):
-    all_tools = []
-    for item in series.dropna():
-        tools = [t.strip() for t in str(item).split(",") if t.strip() and t.strip().lower() not in ["none", "nan", ""]]
-        all_tools.extend(tools)
-    return len(all_tools)
-
-
-def extract_tools_df(dataset):
+# --- Shared Helpers: Deduplicated Equipment Extraction ---
+def extract_unique_tools_df(dataset):
+    """
+    Extracts all tool records and deduplicates by (Project Name, Current Date, Tool).
+    If multiple reports are filed for the same project on the same day with the same tool,
+    it is only counted once.
+    """
     tool_records = []
     for _, row in dataset.iterrows():
-        proj = row.get("Project Name", "Unknown")
+        proj = str(row.get("Project Name", "Unknown")).strip()
+        date = str(row.get("Current Date", "Unknown")).strip()
         raw_tools = str(row.get("Equipment Used", ""))
+        
         if raw_tools and raw_tools.lower() not in ["nan", "none", ""]:
             for tool in raw_tools.split(","):
                 tool_clean = tool.strip()
                 if tool_clean and tool_clean.lower() != "none":
-                    tool_records.append({"Project Name": proj, "Tool": tool_clean})
-    return pd.DataFrame(tool_records) if tool_records else pd.DataFrame(columns=["Project Name", "Tool"])
+                    tool_records.append({
+                        "Project Name": proj,
+                        "Current Date": date,
+                        "Tool": tool_clean
+                    })
+    
+    if not tool_records:
+        return pd.DataFrame(columns=["Project Name", "Current Date", "Tool"])
+    
+    raw_df = pd.DataFrame(tool_records)
+    # Drop duplicates per project, date, and tool
+    deduped_df = raw_df.drop_duplicates(subset=["Project Name", "Current Date", "Tool"])
+    return deduped_df
+
+
+def count_unique_tools(dataset):
+    return len(extract_unique_tools_df(dataset))
 
 
 # Top Dashboard Selector Toggle
@@ -101,9 +115,9 @@ if dashboard_view == "📊 Analytics":
     total_hours = numeric_hours.sum()
     hours_7d = numeric_hours[mask_7d].sum()
 
-    equip_series = df.get("Equipment Used", pd.Series())
-    total_tools_count = count_tools(equip_series)
-    tools_7d_count = count_tools(equip_series[mask_7d])
+    # Deduplicated equipment counts
+    total_tools_count = count_unique_tools(df)
+    tools_7d_count = count_unique_tools(df[mask_7d])
 
     col1.metric("Total Reports Logged", total_logs, delta=f"{logs_7d} in last 7 days", delta_color="off")
     col2.metric("Total Man-Hours Logged", f"{total_hours:,.1f} hrs", delta=f"{hours_7d:,.1f} hrs in last 7 days", delta_color="off")
@@ -121,7 +135,7 @@ if dashboard_view == "📊 Analytics":
     else:
         project_df = df[df["Project Name"] == selected_project].copy()
 
-    # Tabs (Daily SOAP tab removed)
+    # Tabs
     tab_umbrella_summary, tab_analytics, tab_raw = st.tabs([
         "🏢 Project Master Roll-Up",
         "📊 CQI Analytics",
@@ -154,7 +168,7 @@ if dashboard_view == "📊 Analytics":
         else:
             st.subheader(f"Master Summary for Project: {selected_project}")
             p_hours = pd.to_numeric(project_df.get("Man Hours", 0), errors="coerce").fillna(0).sum()
-            p_tools = count_tools(project_df.get("Equipment Used", pd.Series()))
+            p_tools = count_unique_tools(project_df)
             p_entries = len(project_df)
 
             mc1, mc2, mc3 = st.columns(3)
@@ -192,7 +206,7 @@ if dashboard_view == "📊 Analytics":
                 )
             c1.plotly_chart(fig_hours, use_container_width=True)
 
-            df_tools = extract_tools_df(project_df)
+            df_tools = extract_unique_tools_df(project_df)
             if not df_tools.empty:
                 tools_summary = df_tools.groupby("Tool").size().reset_index(name="Count").sort_values(by="Count", ascending=False)
                 fig_proj_tools = px.bar(
@@ -200,7 +214,7 @@ if dashboard_view == "📊 Analytics":
                     x="Count",
                     y="Tool",
                     orientation="h",
-                    title="Top Equipment Used",
+                    title="Top Equipment Used (Unique per Day/Project)",
                     text="Count"
                 )
                 fig_proj_tools.update_traces(textposition="outside")
@@ -256,7 +270,6 @@ elif dashboard_view == "👷 Crew":
     st.markdown("---")
     st.subheader("Man-Hours Breakdown by Submitter")
 
-    # Aggregate by Submitter
     crew_summary = crew_df.groupby("Submitter").agg(
         Total_Hours=("Numeric_Hours", "sum"),
         Total_Reports=("Current Date", "count"),
@@ -294,17 +307,15 @@ elif dashboard_view == "👷 Crew":
 # DASHBOARD 3: EQUIPMENT (Tools & Deployment Metrics)
 # =========================================================
 elif dashboard_view == "🛠️ Equipment":
-    df_tools = extract_tools_df(df)
+    df_tools = extract_unique_tools_df(df)
 
     total_tool_deployments = len(df_tools)
     
     if not df_tools.empty:
-        # Most used tool
         tool_counts = df_tools["Tool"].value_counts()
         most_used_tool = tool_counts.index[0]
         most_used_count = tool_counts.iloc[0]
 
-        # Project with most tools deployed
         project_tool_counts = df_tools["Project Name"].value_counts()
         top_project_name = project_tool_counts.index[0]
         top_project_count = project_tool_counts.iloc[0]
@@ -315,12 +326,12 @@ elif dashboard_view == "🛠️ Equipment":
         top_project_count = 0
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Total Tools Deployed", total_tool_deployments)
-    c2.metric("Most Used Equipment", most_used_tool, delta=f"{most_used_count} uses", delta_color="off")
-    c3.metric("Top Equipment Project", top_project_name, delta=f"{top_project_count} deployments", delta_color="off")
+    c1.metric("Total Equipment Days Deployed", total_tool_deployments)
+    c2.metric("Most Used Equipment", most_used_tool, delta=f"{most_used_count} site-days", delta_color="off")
+    c3.metric("Top Equipment Project", top_project_name, delta=f"{top_project_count} equipment-days", delta_color="off")
 
     st.markdown("---")
-    st.subheader("Equipment Usage & Allocation")
+    st.subheader("Equipment Usage & Allocation (Deduplicated per Day)")
 
     if not df_tools.empty:
         col_tool_chart, col_proj_chart = st.columns(2)
@@ -332,7 +343,7 @@ elif dashboard_view == "🛠️ Equipment":
                 x="Deployments",
                 y="Tool",
                 orientation="h",
-                title="Equipment Frequency",
+                title="Equipment Frequency (Total Days on Site)",
                 text="Deployments"
             )
             fig_tools.update_traces(textposition="outside")
@@ -345,7 +356,7 @@ elif dashboard_view == "🛠️ Equipment":
                 x="Project Name",
                 y="Deployments",
                 color="Tool",
-                title="Equipment Deployed by Project",
+                title="Equipment Days by Project",
                 barmode="stack"
             )
             st.plotly_chart(fig_proj_tools, use_container_width=True)
