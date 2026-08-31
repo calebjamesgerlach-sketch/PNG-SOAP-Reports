@@ -145,26 +145,6 @@ if dashboard_view == "📊 Analytics":
         "📁 Raw Data Table"
     ])
 
-    with tab_soap:
-        st.subheader("Daily Field Logs")
-        if filtered_df.empty:
-            st.info("No daily reports found for this selection.")
-        else:
-            display_df = filtered_df.sort_values(by="Parsed Date", ascending=False)
-            for idx, row in display_df.iterrows():
-                report_title = f"📅 {row.get('Current Date', 'N/A')} — {row.get('Project Name', 'Unknown')} (Inspector/Lead: {row.get('Name and Title', 'Unknown')})"
-                with st.expander(report_title, expanded=(selected_report != "All Entries")):
-                    c1, c2, c3 = st.columns(3)
-                    c1.write(f"**Location:** {row.get('Location Address', 'N/A')}")
-                    c2.write(f"**Travel Time:** {row.get('Travel Time', 'N/A')}")
-                    c3.write(f"**Man Hours:** {row.get('Man Hours', 'N/A')} hrs")
-
-                    st.markdown("#### SOAP Breakdown")
-                    st.info(f"**S (Subjective - Crew reports, delays, concerns):**\n{row.get('Subjective', 'No entries logged.')}")
-                    st.write(f"**O (Objective - Work completed, quantities, deliveries):**\n{row.get('Objective', 'No entries logged.')}")
-                    st.warning(f"**A (Assessment - Quality control, safety issues, compliance):**\n{row.get('Assessment', 'No entries logged.')}")
-                    st.success(f"**P (Plan - Next day targets, trades needed):**\n{row.get('Plan', 'No entries logged.')}")
-
     with tab_umbrella_summary:
         if selected_project == "All":
             st.subheader("All Projects Overview")
