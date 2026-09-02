@@ -251,56 +251,104 @@ if dashboard_view == "📊 Analytics":
 
 
 # =========================================================
-# DASHBOARD 2: CREW (Personnel & Submitter Hours)
+# DASHBOARD 2: CREW (Personnel & Pay Period Hours)
 # =========================================================
 elif dashboard_view == "👷 Crew":
     crew_df = df.copy()
     crew_df["Numeric_Hours"] = pd.to_numeric(crew_df.get("Man Hours", 0), errors="coerce").fillna(0)
     crew_df["Submitter"] = crew_df.get("Name and Title", "Unknown").astype(str).str.strip()
 
-    total_crew_hours = crew_df["Numeric_Hours"].sum()
-    unique_crew_members = crew_df["Submitter"].nunique()
-    avg_hours_per_log = crew_df["Numeric_Hours"].mean() if len(crew_df) > 0 else 0
+    # Drop records with invalid or missing dates for accurate period filtering
+    valid_dates_df = crew_df.dropna(subset=["Parsed Date"]).copy()
 
+    # Create Month identifier (e.g., '2026-08') and Day of Month
+    valid_dates_df["Year_Month"] = valid_dates_df["Parsed Date"].dt.strftime("%Y-%m")
+    valid_dates_df["Day"] = valid_dates_df["Parsed Date"].dt.day
+
+    # Categorize into pay periods: 1st–15th and 16th–End
+    valid_dates_df["Pay_Period"] = valid_dates_df["Day"].apply(
+        lambda d: "1st – 15th" if d <= 15 else "16th – End"
+    )
+
+    # Top Month Selector
+    available_months = sorted(valid_dates_df["Year_Month"].unique(), reverse=True)
+    
+    if available_months:
+        selected_month = st.selectbox("Select Month for Pay Period Breakdown", available_months)
+        month_filtered_df = valid_dates_df[valid_dates_df["Year_Month"] == selected_month].copy()
+    else:
+        selected_month = "No Data"
+        month_filtered_df = valid_dates_df.copy()
+
+    # Calculate Period Hours for Selected Month
+    p1_hours = month_filtered_df[month_filtered_df["Pay_Period"] == "1st – 15th"]["Numeric_Hours"].sum()
+    p2_hours = month_filtered_df[month_filtered_df["Pay_Period"] == "16th – End"]["Numeric_Hours"].sum()
+    month_total_hours = p1_hours + p2_hours
+
+    # Metrics Row
     c1, c2, c3 = st.columns(3)
-    c1.metric("Total Man-Hours Logged", f"{total_crew_hours:,.1f} hrs")
-    c2.metric("Active Field Submitter(s)", unique_crew_members)
-    c3.metric("Average Hours / Log", f"{avg_hours_per_log:.1f} hrs")
+    c1.metric(f"Total Hours ({selected_month})", f"{month_total_hours:,.1f} hrs")
+    c2.metric("Period 1 (1st – 15th)", f"{p1_hours:,.1f} hrs")
+    c3.metric("Period 2 (16th – End)", f"{p2_hours:,.1f} hrs")
 
     st.markdown("---")
-    st.subheader("Man-Hours Breakdown by Submitter")
+    st.subheader(f"Crew Hours Breakdown by Half-Month ({selected_month})")
 
-    crew_summary = crew_df.groupby("Submitter").agg(
-        Total_Hours=("Numeric_Hours", "sum"),
-        Total_Reports=("Current Date", "count"),
-        Projects_Covered=("Project Name", lambda x: ", ".join(sorted(set(str(p) for p in x.dropna()))))
-    ).reset_index().sort_values(by="Total_Hours", ascending=False)
+    if not month_filtered_df.empty:
+        # Pivot table: Submitter x Pay_Period
+        pivot_periods = month_filtered_df.pivot_table(
+            index="Submitter",
+            columns="Pay_Period",
+            values="Numeric_Hours",
+            aggfunc="sum",
+            fill_value=0
+        ).reset_index()
 
-    col_chart, col_table = st.columns([1, 1])
+        # Ensure both columns exist even if no logs are in one period
+        if "1st – 15th" not in pivot_periods.columns:
+            pivot_periods["1st – 15th"] = 0.0
+        if "16th – End" not in pivot_periods.columns:
+            pivot_periods["16th – End"] = 0.0
 
-    with col_chart:
-        fig_crew = px.bar(
-            crew_summary,
-            x="Submitter",
-            y="Total_Hours",
-            title="Total Hours Logged per Submitter",
-            text="Total_Hours",
-            labels={"Total_Hours": "Hours", "Submitter": "Crew Member"}
-        )
-        fig_crew.update_traces(texttemplate="%{text:.1f}h", textposition="outside")
-        st.plotly_chart(fig_crew, use_container_width=True)
+        pivot_periods["Total Month Hours"] = pivot_periods["1st – 15th"] + pivot_periods["16th – End"]
+        pivot_periods = pivot_periods.sort_values(by="Total Month Hours", ascending=False)
 
-    with col_table:
-        st.write("#### Submitter Summary Table")
-        st.dataframe(
-            crew_summary.rename(columns={
-                "Submitter": "Crew Lead / Submitter",
-                "Total_Hours": "Total Man-Hours",
-                "Total_Reports": "Logs Filed",
-                "Projects_Covered": "Projects Worked"
-            }),
-            use_container_width=True
-        )
+        col_chart, col_table = st.columns([1.1, 0.9])
+
+        with col_chart:
+            # Grouped bar chart comparing periods per worker
+            plot_df = month_filtered_df.groupby(["Submitter", "Pay_Period"])["Numeric_Hours"].sum().reset_index()
+            fig_period = px.bar(
+                plot_df,
+                x="Submitter",
+                y="Numeric_Hours",
+                color="Pay_Period",
+                barmode="group",
+                title=f"Hours per Pay Period by Crew Member ({selected_month})",
+                labels={"Numeric_Hours": "Hours", "Submitter": "Crew Member", "Pay_Period": "Period"},
+                color_discrete_map={"1st – 15th": "#3b82f6", "16th – End": "#10b981"}
+            )
+            fig_period.update_layout(legend_title_text="")
+            st.plotly_chart(fig_period, use_container_width=True)
+
+        with col_table:
+            st.write("#### Pay Period Summary Table")
+            display_table = pivot_periods.rename(columns={
+                "Submitter": "Crew Member",
+                "1st – 15th": "1st – 15th (Hrs)",
+                "16th – End": "16th – End (Hrs)",
+                "Total Month Hours": "Month Total (Hrs)"
+            })
+            st.dataframe(
+                display_table.style.format({
+                    "1st – 15th (Hrs)": "{:.1f}",
+                    "16th – End (Hrs)": "{:.1f}",
+                    "Month Total (Hrs)": "{:.1f}"
+                }),
+                use_container_width=True
+            )
+    else:
+        st.info("No dated entries logged for this month.")
 
 
 # =========================================================
