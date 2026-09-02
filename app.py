@@ -376,7 +376,7 @@ elif dashboard_view == "🛠️ Equipment":
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Equipment Deployed", total_tool_deployments)
     c2.metric("Most Used Equipment", most_used_tool, delta=f"{most_used_count} site-days", delta_color="off")
-    c3.metric("Top Equipment Project", top_project_name, delta=f"{top_project_count} equipment-days", delta_color="off")
+    c3.metric("Top Equipment Project", top_project_name, delta=f"{top_project_count} site-days", delta_color="off")
 
     st.markdown("---")
     st.subheader("Equipment Usage & Allocation")
