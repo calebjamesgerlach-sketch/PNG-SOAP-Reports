@@ -88,6 +88,82 @@ def extract_unique_tools_df(dataset):
 def count_unique_tools(dataset):
     return len(extract_unique_tools_df(dataset))
 
+import calendar
+
+
+def build_monthly_calendar_heatmap(date_series, year_month_str):
+    """Generates a Monday-Sunday calendar grid heatmap colored by report frequency
+
+    using a red gradient.
+    """
+    year, month = map(int, year_month_str.split("-"))
+    num_days = calendar.monthrange(year, month)[1]
+
+    # Count reports filed per calendar day for the month
+    month_dates = pd.to_datetime(date_series).dropna()
+    this_month_dates = month_dates[
+        (month_dates.dt.year == year) & (month_dates.dt.month == month)
+    ]
+    day_counts = this_month_dates.dt.day.value_counts().to_dict()
+
+    # Generate calendar matrix (weeks x 7 days, Mon-Sun)
+    cal = calendar.Calendar(firstweekday=0)
+    month_cal = cal.monthdayscalendar(year, month)
+
+    z_matrix = []
+    text_matrix = []
+    hover_matrix = []
+
+    for week_idx, week in enumerate(month_cal):
+        z_row = []
+        text_row = []
+        hover_row = []
+        for day in week:
+            if day == 0:
+                z_row.append(None)
+                text_row.append("")
+                hover_row.append("")
+            else:
+                count = day_counts.get(day, 0)
+                z_row.append(count)
+                text_row.append(f"<b>{day}</b><br>{count} logs" if count > 0 else f"<b>{day}</b>")
+                hover_row.append(f"Date: {year}-{month:02d}-{day:02d}<br>Reports Filed: {count}")
+        z_matrix.append(z_row)
+        text_matrix.append(text_row)
+        hover_matrix.append(hover_row)
+
+    days_header = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    week_labels = [f"W{i + 1}" for i in range(len(month_cal))]
+
+    # Build heatmap
+    fig = px.imshow(
+        z_matrix,
+        x=days_header,
+        y=week_labels,
+        color_continuous_scale="Reds",
+        labels={"color": "Reports Logged"},
+        title=f"Activity & Filing Heatmap — {calendar.month_name[month]} {year}",
+    )
+
+    fig.update_traces(
+        text=text_matrix,
+        texttemplate="%{text}",
+        hovertext=hover_matrix,
+        hoverinfo="text",
+        textfont_size=12,
+        xgap=4,
+        ygap=4,
+    )
+
+    fig.update_layout(
+        height=340,
+        margin=dict(l=20, r=20, t=40, b=20),
+        xaxis=dict(side="top"),
+        yaxis=dict(autorange="reversed", showticklabels=False),
+        coloraxis_colorbar=dict(title="Reports", thickness=14, len=0.8),
+    )
+
+    return fig
 
 # Top Dashboard Selector Toggle
 dashboard_view = st.radio(
@@ -245,6 +321,31 @@ if dashboard_view == "📊 Analytics":
                     fig_weather.update_traces(textposition="inside", textinfo="percent+label")
                     st.plotly_chart(fig_weather, use_container_width=True)
 
+# --- 4. Monthly Activity & Filing Calendar ---
+            st.markdown("---")
+            st.subheader("🗓️ Daily Activity Calendar")
+
+            # Extract available months for selection
+            valid_cal_dates = project_df["Parsed Date"].dropna()
+            if not valid_cal_dates.empty:
+                cal_months = sorted(valid_cal_dates.dt.strftime("%Y-%m").unique(), reverse=True)
+                sel_cal_month = st.selectbox(
+                    "Select Month for Activity View", 
+                    cal_months, 
+                    key="cal_month_picker"
+                )
+                
+                cal_fig = build_monthly_calendar_heatmap(
+                    project_df["Parsed Date"], 
+                    sel_cal_month
+                )
+                st.plotly_chart(cal_fig, use_container_width=True)
+                
+                # Legend note
+                st.caption("🔴 **Color Density:** Darker red indicates higher report volume on that day. Blank/White cells indicate non-month days or zero logs filed (weekends/days off).")
+            else:
+                st.info("No dated activity logs found to build the calendar.")
+    
     with tab_raw:
         st.subheader("Raw Submission Table")
         st.dataframe(project_df, use_container_width=True)
