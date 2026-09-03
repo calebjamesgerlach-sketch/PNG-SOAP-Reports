@@ -164,9 +164,13 @@ st.markdown("---")
 # DASHBOARD 1: ANALYTICS (Master Roll-up & CQI Dashboard)
 # =========================================================
 if dashboard_view == "📊 Analytics":
-    # Ensure all-time toggle state survives tab/dashboard switching
-    if "analytics_all_time" not in st.session_state:
-        st.session_state["analytics_all_time"] = True
+    # 1. Shadow key that Streamlit's widget GC cannot delete
+    if "saved_all_time_state" not in st.session_state:
+        st.session_state["saved_all_time_state"] = True
+
+    # 2. Callback to save state immediately when user flips the switch
+    def on_toggle_change():
+        st.session_state["saved_all_time_state"] = st.session_state["analytics_all_time_widget"]
 
     # --- Centered Date Range / Month / All-Time Controls ---
     valid_dates = df["Parsed Date"].dropna()
@@ -177,10 +181,14 @@ if dashboard_view == "📊 Analytics":
     with ctrl_col2:
         sub_c1, sub_c2 = st.columns([1.2, 1])
         with sub_c2:
-            st.write("")  # Vertical alignment spacer
             st.write("")
-            # Note: Do not pass 'value=' when the key is already managed in st.session_state
-            all_time_toggle = st.toggle("View All-Time", key="analytics_all_time")
+            st.write("")
+            all_time_toggle = st.toggle(
+                "View All-Time",
+                value=st.session_state["saved_all_time_state"],
+                key="analytics_all_time_widget",
+                on_change=on_toggle_change
+            )
 
         with sub_c1:
             if available_months:
@@ -193,14 +201,6 @@ if dashboard_view == "📊 Analytics":
             else:
                 selected_month = None
                 st.selectbox("Filter by Specific Month", ["No Data"], disabled=True)
-
-    # Apply Time Scope Filter
-    if all_time_toggle or not selected_month:
-        scoped_df = df.copy()
-        time_label = "All-Time"
-    else:
-        scoped_df = df[df["Parsed Date"].dt.strftime("%Y-%m") == selected_month].copy()
-        time_label = f"Month: {selected_month}"
 
     st.markdown("---")
 
