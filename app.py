@@ -85,8 +85,6 @@ def count_unique_tools(dataset):
 
 def build_monthly_calendar_heatmap(date_series, year_month_str):
     year, month = map(int, year_month_str.split("-"))
-    num_days = calendar.monthrange(year, month)[1]
-
     month_dates = pd.to_datetime(date_series).dropna()
     this_month_dates = month_dates[
         (month_dates.dt.year == year) & (month_dates.dt.month == month)
@@ -164,19 +162,19 @@ st.markdown("---")
 # DASHBOARD 1: ANALYTICS (Master Roll-up & CQI Dashboard)
 # =========================================================
 if dashboard_view == "📊 Analytics":
-    # 1. Shadow key that Streamlit's widget GC cannot delete
+    # 1. State Persistence setup
     if "saved_all_time_state" not in st.session_state:
         st.session_state["saved_all_time_state"] = True
 
-    # 2. Callback to save state immediately when user flips the switch
     def on_toggle_change():
         st.session_state["saved_all_time_state"] = st.session_state["analytics_all_time_widget"]
 
-    # --- Centered Date Range / Month / All-Time Controls ---
+    # 2. Extract unique available months
     valid_dates = df["Parsed Date"].dropna()
     available_months = sorted(valid_dates.dt.strftime("%Y-%m").unique(), reverse=True) if not valid_dates.empty else []
 
-    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([1, 1.2, 1])
+    # 3. Controls UI: Centered Month Picker + All-Time Toggle
+    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([1, 1.3, 1])
 
     with ctrl_col2:
         sub_c1, sub_c2 = st.columns([1.2, 1])
@@ -201,6 +199,14 @@ if dashboard_view == "📊 Analytics":
             else:
                 selected_month = None
                 st.selectbox("Filter by Specific Month", ["No Data"], disabled=True)
+
+    # 4. Scope the dataframe based on user choice
+    if all_time_toggle or not selected_month:
+        scoped_df = df.copy()
+        time_label = "All-Time"
+    else:
+        scoped_df = df[df["Parsed Date"].dt.strftime("%Y-%m") == selected_month].copy()
+        time_label = f"Month: {selected_month}"
 
     st.markdown("---")
 
