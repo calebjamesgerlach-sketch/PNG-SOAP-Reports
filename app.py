@@ -192,7 +192,7 @@ with ctrl_center:
         )
 
 # Row B: Centered Dashboard View Selector (Matching column width)
-_, dash_center, _ = st.columns([1.2, 1.0, 1.2])
+_, dash_center, _ = st.columns([1.35, 1.0, 1.05])
 
 with dash_center:
     dashboard_view = st.radio(
