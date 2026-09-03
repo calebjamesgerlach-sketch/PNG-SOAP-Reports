@@ -164,6 +164,10 @@ st.markdown("---")
 # DASHBOARD 1: ANALYTICS (Master Roll-up & CQI Dashboard)
 # =========================================================
 if dashboard_view == "📊 Analytics":
+    # Ensure all-time toggle state survives tab/dashboard switching
+    if "analytics_all_time" not in st.session_state:
+        st.session_state["analytics_all_time"] = True
+
     # --- Centered Date Range / Month / All-Time Controls ---
     valid_dates = df["Parsed Date"].dropna()
     available_months = sorted(valid_dates.dt.strftime("%Y-%m").unique(), reverse=True) if not valid_dates.empty else []
@@ -173,9 +177,10 @@ if dashboard_view == "📊 Analytics":
     with ctrl_col2:
         sub_c1, sub_c2 = st.columns([1.2, 1])
         with sub_c2:
-            st.write("")  # Vertical spacing spacer
+            st.write("")  # Vertical alignment spacer
             st.write("")
-            all_time_toggle = st.toggle("View All-Time", value=True, key="analytics_all_time")
+            # Note: Do not pass 'value=' when the key is already managed in st.session_state
+            all_time_toggle = st.toggle("View All-Time", key="analytics_all_time")
 
         with sub_c1:
             if available_months:
