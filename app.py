@@ -1,5 +1,6 @@
 import os
 import json
+import calendar
 import streamlit as st
 import pandas as pd
 import gspread
@@ -55,11 +56,6 @@ with st.spinner("Connecting to Google Sheets..."):
 
 # --- Shared Helpers: Deduplicated Equipment Extraction ---
 def extract_unique_tools_df(dataset):
-    """
-    Extracts all tool records and deduplicates by (Project Name, Current Date, Tool).
-    If multiple reports are filed for the same project on the same day with the same tool,
-    it is only counted once.
-    """
     tool_records = []
     for _, row in dataset.iterrows():
         proj = str(row.get("Project Name", "Unknown")).strip()
@@ -80,33 +76,23 @@ def extract_unique_tools_df(dataset):
         return pd.DataFrame(columns=["Project Name", "Current Date", "Tool"])
     
     raw_df = pd.DataFrame(tool_records)
-    # Drop duplicates per project, date, and tool
-    deduped_df = raw_df.drop_duplicates(subset=["Project Name", "Current Date", "Tool"])
-    return deduped_df
+    return raw_df.drop_duplicates(subset=["Project Name", "Current Date", "Tool"])
 
 
 def count_unique_tools(dataset):
     return len(extract_unique_tools_df(dataset))
 
-import calendar
-
 
 def build_monthly_calendar_heatmap(date_series, year_month_str):
-    """Generates a Monday-Sunday calendar grid heatmap colored by report frequency
-
-    using a red gradient.
-    """
     year, month = map(int, year_month_str.split("-"))
     num_days = calendar.monthrange(year, month)[1]
 
-    # Count reports filed per calendar day for the month
     month_dates = pd.to_datetime(date_series).dropna()
     this_month_dates = month_dates[
         (month_dates.dt.year == year) & (month_dates.dt.month == month)
     ]
     day_counts = this_month_dates.dt.day.value_counts().to_dict()
 
-    # Generate calendar matrix (weeks x 7 days, Mon-Sun)
     cal = calendar.Calendar(firstweekday=0)
     month_cal = cal.monthdayscalendar(year, month)
 
@@ -114,7 +100,7 @@ def build_monthly_calendar_heatmap(date_series, year_month_str):
     text_matrix = []
     hover_matrix = []
 
-    for week_idx, week in enumerate(month_cal):
+    for week in month_cal:
         z_row = []
         text_row = []
         hover_row = []
@@ -135,7 +121,6 @@ def build_monthly_calendar_heatmap(date_series, year_month_str):
     days_header = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     week_labels = [f"W{i + 1}" for i in range(len(month_cal))]
 
-    # Build heatmap
     fig = px.imshow(
         z_matrix,
         x=days_header,
@@ -162,8 +147,8 @@ def build_monthly_calendar_heatmap(date_series, year_month_str):
         yaxis=dict(autorange="reversed", showticklabels=False),
         coloraxis_colorbar=dict(title="Reports", thickness=14, len=0.8),
     )
-
     return fig
+
 
 # Top Dashboard Selector Toggle
 dashboard_view = st.radio(
@@ -179,37 +164,71 @@ st.markdown("---")
 # DASHBOARD 1: ANALYTICS (Master Roll-up & CQI Dashboard)
 # =========================================================
 if dashboard_view == "📊 Analytics":
+    # --- Centered Date Range / Month / All-Time Controls ---
+    valid_dates = df["Parsed Date"].dropna()
+    available_months = sorted(valid_dates.dt.strftime("%Y-%m").unique(), reverse=True) if not valid_dates.empty else []
+
+    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([1, 1.2, 1])
+
+    with ctrl_col2:
+        sub_c1, sub_c2 = st.columns([1.2, 1])
+        with sub_c2:
+            st.write("")  # Vertical spacing spacer
+            st.write("")
+            all_time_toggle = st.toggle("View All-Time", value=True, key="analytics_all_time")
+
+        with sub_c1:
+            if available_months:
+                selected_month = st.selectbox(
+                    "Filter by Specific Month",
+                    available_months,
+                    disabled=all_time_toggle,
+                    key="analytics_month_picker"
+                )
+            else:
+                selected_month = None
+                st.selectbox("Filter by Specific Month", ["No Data"], disabled=True)
+
+    # Apply Time Scope Filter
+    if all_time_toggle or not selected_month:
+        scoped_df = df.copy()
+        time_label = "All-Time"
+    else:
+        scoped_df = df[df["Parsed Date"].dt.strftime("%Y-%m") == selected_month].copy()
+        time_label = f"Month: {selected_month}"
+
+    st.markdown("---")
+
     # Macro KPIs
     col1, col2, col3 = st.columns(3)
     cutoff_date = pd.Timestamp.now() - pd.Timedelta(days=7)
-    mask_7d = df["Parsed Date"] >= cutoff_date
+    mask_7d = scoped_df["Parsed Date"] >= cutoff_date
 
-    total_logs = len(df)
+    total_logs = len(scoped_df)
     logs_7d = int(mask_7d.sum())
 
-    numeric_hours = pd.to_numeric(df.get("Man Hours", 0), errors="coerce").fillna(0)
+    numeric_hours = pd.to_numeric(scoped_df.get("Man Hours", 0), errors="coerce").fillna(0)
     total_hours = numeric_hours.sum()
     hours_7d = numeric_hours[mask_7d].sum()
 
-    # Deduplicated equipment counts
-    total_tools_count = count_unique_tools(df)
-    tools_7d_count = count_unique_tools(df[mask_7d])
+    total_tools_count = count_unique_tools(scoped_df)
+    tools_7d_count = count_unique_tools(scoped_df[mask_7d])
 
-    col1.metric("Total Reports Logged", total_logs, delta=f"{logs_7d} in last 7 days", delta_color="off")
-    col2.metric("Total Man-Hours Logged", f"{total_hours:,.1f} hrs", delta=f"{hours_7d:,.1f} hrs in last 7 days", delta_color="off")
-    col3.metric("Total Equipment Deployed", total_tools_count, delta=f"{tools_7d_count} in last 7 days", delta_color="off")
+    col1.metric(f"Total Reports Logged ({time_label})", total_logs, delta=f"{logs_7d} in last 7 days", delta_color="off")
+    col2.metric(f"Total Man-Hours Logged ({time_label})", f"{total_hours:,.1f} hrs", delta=f"{hours_7d:,.1f} hrs in last 7 days", delta_color="off")
+    col3.metric(f"Total Equipment Deployed ({time_label})", total_tools_count, delta=f"{tools_7d_count} in last 7 days", delta_color="off")
 
     st.markdown("---")
 
     # Sidebar Filter: Project Umbrella
     st.sidebar.header("Navigation & Filters")
-    project_list = ["All"] + sorted([p for p in df["Project Name"].dropna().unique() if str(p).strip()])
+    project_list = ["All"] + sorted([p for p in scoped_df["Project Name"].dropna().unique() if str(p).strip()])
     selected_project = st.sidebar.selectbox("Select Project (Umbrella)", project_list)
 
     if selected_project == "All":
-        project_df = df.copy()
+        project_df = scoped_df.copy()
     else:
-        project_df = df[df["Project Name"] == selected_project].copy()
+        project_df = scoped_df[scoped_df["Project Name"] == selected_project].copy()
 
     # Tabs
     tab_umbrella_summary, tab_analytics, tab_raw = st.tabs([
@@ -220,29 +239,32 @@ if dashboard_view == "📊 Analytics":
 
     with tab_umbrella_summary:
         if selected_project == "All":
-            st.subheader("All Projects Overview")
-            summary_table = df.groupby("Project Name").agg(
-                Total_Reports=("Current Date", "count"),
-                Total_Hours=("Man Hours", lambda x: pd.to_numeric(x, errors="coerce").fillna(0).sum()),
-                First_Log=("Parsed Date", "min"),
-                Last_Log=("Parsed Date", "max")
-            ).reset_index()
+            st.subheader(f"All Projects Overview ({time_label})")
+            if not scoped_df.empty:
+                summary_table = scoped_df.groupby("Project Name").agg(
+                    Total_Reports=("Current Date", "count"),
+                    Total_Hours=("Man Hours", lambda x: pd.to_numeric(x, errors="coerce").fillna(0).sum()),
+                    First_Log=("Parsed Date", "min"),
+                    Last_Log=("Parsed Date", "max")
+                ).reset_index()
 
-            summary_table["First_Log"] = summary_table["First_Log"].dt.strftime("%Y-%m-%d")
-            summary_table["Last_Log"] = summary_table["Last_Log"].dt.strftime("%Y-%m-%d")
+                summary_table["First_Log"] = summary_table["First_Log"].dt.strftime("%Y-%m-%d")
+                summary_table["Last_Log"] = summary_table["Last_Log"].dt.strftime("%Y-%m-%d")
 
-            st.dataframe(
-                summary_table.rename(columns={
-                    "Project Name": "Project (Umbrella)",
-                    "Total_Reports": "Total Daily Reports",
-                    "Total_Hours": "Total Man-Hours",
-                    "First_Log": "First Activity",
-                    "Last_Log": "Latest Activity"
-                }),
-                use_container_width=True
-            )
+                st.dataframe(
+                    summary_table.rename(columns={
+                        "Project Name": "Project (Umbrella)",
+                        "Total_Reports": "Total Daily Reports",
+                        "Total_Hours": "Total Man-Hours",
+                        "First_Log": "First Activity",
+                        "Last_Log": "Latest Activity"
+                    }),
+                    use_container_width=True
+                )
+            else:
+                st.info("No records found for this time period.")
         else:
-            st.subheader(f"Master Summary for Project: {selected_project}")
+            st.subheader(f"Master Summary for Project: {selected_project} ({time_label})")
             p_hours = pd.to_numeric(project_df.get("Man Hours", 0), errors="coerce").fillna(0).sum()
             p_tools = count_unique_tools(project_df)
             p_entries = len(project_df)
@@ -253,14 +275,18 @@ if dashboard_view == "📊 Analytics":
             mc3.metric("Total Equipment Deployments", p_tools)
 
             st.markdown("---")
-            st.markdown("### Cumulative Safety & QC Log (All Reports)")
+            st.markdown(f"### Cumulative Safety & QC Log ({time_label})")
             assess_df = project_df.dropna(subset=["Assessment"]).sort_values(by="Parsed Date", ascending=False)
+            has_notes = False
             for _, a_row in assess_df.iterrows():
                 if str(a_row["Assessment"]).strip() and str(a_row["Assessment"]).lower() != "no entries logged.":
                     st.warning(f"**{a_row.get('Current Date')} (by {a_row.get('Name and Title', 'Crew')}):**\n{a_row.get('Assessment')}")
+                    has_notes = True
+            if not has_notes:
+                st.info("No safety or QC assessment logs recorded for this selection.")
 
     with tab_analytics:
-        st.subheader("Continuous Quality Improvement (CQI) Metrics")
+        st.subheader(f"Continuous Quality Improvement (CQI) Metrics ({time_label})")
         if not project_df.empty:
             c1, c2 = st.columns(2)
 
@@ -321,33 +347,22 @@ if dashboard_view == "📊 Analytics":
                     fig_weather.update_traces(textposition="inside", textinfo="percent+label")
                     st.plotly_chart(fig_weather, use_container_width=True)
 
-# --- 4. Monthly Activity & Filing Calendar ---
+            # Monthly Activity Calendar
             st.markdown("---")
             st.subheader("🗓️ Daily Activity Calendar")
 
-            # Extract available months for selection
-            valid_cal_dates = project_df["Parsed Date"].dropna()
-            if not valid_cal_dates.empty:
-                cal_months = sorted(valid_cal_dates.dt.strftime("%Y-%m").unique(), reverse=True)
-                sel_cal_month = st.selectbox(
-                    "Select Month for Activity View", 
-                    cal_months, 
-                    key="cal_month_picker"
-                )
-                
-                cal_fig = build_monthly_calendar_heatmap(
-                    project_df["Parsed Date"], 
-                    sel_cal_month
-                )
+            cal_target_month = selected_month if (not all_time_toggle and selected_month) else (available_months[0] if available_months else None)
+            if cal_target_month:
+                cal_fig = build_monthly_calendar_heatmap(project_df["Parsed Date"], cal_target_month)
                 st.plotly_chart(cal_fig, use_container_width=True)
-                
-                # Legend note
-                st.caption("🔴 **Color Density:** Darker red indicates higher report volume on that day. Blank/White cells indicate non-month days or zero logs filed (weekends/days off).")
+                st.caption(f"🔴 **Activity Heatmap for {cal_target_month}:** Darker red indicates higher report volume on that day. White cells indicate zero reports or days off.")
             else:
-                st.info("No dated activity logs found to build the calendar.")
-    
+                st.info("No dates available to generate calendar.")
+        else:
+            st.info("No logs found matching this time period and project filter.")
+
     with tab_raw:
-        st.subheader("Raw Submission Table")
+        st.subheader(f"Raw Submission Table ({time_label})")
         st.dataframe(project_df, use_container_width=True)
 
 
@@ -359,19 +374,13 @@ elif dashboard_view == "👷 Crew":
     crew_df["Numeric_Hours"] = pd.to_numeric(crew_df.get("Man Hours", 0), errors="coerce").fillna(0)
     crew_df["Submitter"] = crew_df.get("Name and Title", "Unknown").astype(str).str.strip()
 
-    # Drop records with invalid or missing dates for accurate period filtering
     valid_dates_df = crew_df.dropna(subset=["Parsed Date"]).copy()
-
-    # Create Month identifier (e.g., '2026-08') and Day of Month
     valid_dates_df["Year_Month"] = valid_dates_df["Parsed Date"].dt.strftime("%Y-%m")
     valid_dates_df["Day"] = valid_dates_df["Parsed Date"].dt.day
-
-    # Categorize into pay periods: 1st–15th and 16th–End
     valid_dates_df["Pay_Period"] = valid_dates_df["Day"].apply(
         lambda d: "1st – 15th" if d <= 15 else "16th – End"
     )
 
-    # Top Month Selector
     available_months = sorted(valid_dates_df["Year_Month"].unique(), reverse=True)
     
     if available_months:
@@ -381,12 +390,10 @@ elif dashboard_view == "👷 Crew":
         selected_month = "No Data"
         month_filtered_df = valid_dates_df.copy()
 
-    # Calculate Period Hours for Selected Month
     p1_hours = month_filtered_df[month_filtered_df["Pay_Period"] == "1st – 15th"]["Numeric_Hours"].sum()
     p2_hours = month_filtered_df[month_filtered_df["Pay_Period"] == "16th – End"]["Numeric_Hours"].sum()
     month_total_hours = p1_hours + p2_hours
 
-    # Metrics Row
     c1, c2, c3 = st.columns(3)
     c1.metric(f"Total Hours ({selected_month})", f"{month_total_hours:,.1f} hrs")
     c2.metric("Period 1 (1st – 15th)", f"{p1_hours:,.1f} hrs")
@@ -396,7 +403,6 @@ elif dashboard_view == "👷 Crew":
     st.subheader(f"Crew Hours Breakdown by Half-Month ({selected_month})")
 
     if not month_filtered_df.empty:
-        # Pivot table: Submitter x Pay_Period
         pivot_periods = month_filtered_df.pivot_table(
             index="Submitter",
             columns="Pay_Period",
@@ -405,7 +411,6 @@ elif dashboard_view == "👷 Crew":
             fill_value=0
         ).reset_index()
 
-        # Ensure both columns exist even if no logs are in one period
         if "1st – 15th" not in pivot_periods.columns:
             pivot_periods["1st – 15th"] = 0.0
         if "16th – End" not in pivot_periods.columns:
@@ -417,7 +422,6 @@ elif dashboard_view == "👷 Crew":
         col_chart, col_table = st.columns([1.1, 0.9])
 
         with col_chart:
-            # Grouped bar chart comparing periods per worker
             plot_df = month_filtered_df.groupby(["Submitter", "Pay_Period"])["Numeric_Hours"].sum().reset_index()
             fig_period = px.bar(
                 plot_df,
@@ -475,12 +479,12 @@ elif dashboard_view == "🛠️ Equipment":
         top_project_count = 0
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Total Equipment Deployed", total_tool_deployments)
+    c1.metric("Total Equipment Days Deployed", total_tool_deployments)
     c2.metric("Most Used Equipment", most_used_tool, delta=f"{most_used_count} site-days", delta_color="off")
-    c3.metric("Top Equipment Project", top_project_name, delta=f"{top_project_count} site-days", delta_color="off")
+    c3.metric("Top Equipment Project", top_project_name, delta=f"{top_project_count} equipment-days", delta_color="off")
 
     st.markdown("---")
-    st.subheader("Equipment Usage & Allocation")
+    st.subheader("Equipment Usage & Allocation (Deduplicated per Day)")
 
     if not df_tools.empty:
         col_tool_chart, col_proj_chart = st.columns(2)
