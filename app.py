@@ -88,6 +88,82 @@ def extract_unique_tools_df(dataset):
 def count_unique_tools(dataset):
     return len(extract_unique_tools_df(dataset))
 
+import calendar
+
+
+def build_monthly_calendar_heatmap(date_series, year_month_str):
+    """Generates a Monday-Sunday calendar grid heatmap colored by report frequency
+
+    using a red gradient.
+    """
+    year, month = map(int, year_month_str.split("-"))
+    num_days = calendar.monthrange(year, month)[1]
+
+    # Count reports filed per calendar day for the month
+    month_dates = pd.to_datetime(date_series).dropna()
+    this_month_dates = month_dates[
+        (month_dates.dt.year == year) & (month_dates.dt.month == month)
+    ]
+    day_counts = this_month_dates.dt.day.value_counts().to_dict()
+
+    # Generate calendar matrix (weeks x 7 days, Mon-Sun)
+    cal = calendar.Calendar(firstweekday=0)
+    month_cal = cal.monthdayscalendar(year, month)
+
+    z_matrix = []
+    text_matrix = []
+    hover_matrix = []
+
+    for week_idx, week in enumerate(month_cal):
+        z_row = []
+        text_row = []
+        hover_row = []
+        for day in week:
+            if day == 0:
+                z_row.append(None)
+                text_row.append("")
+                hover_row.append("")
+            else:
+                count = day_counts.get(day, 0)
+                z_row.append(count)
+                text_row.append(f"<b>{day}</b><br>{count} logs" if count > 0 else f"<b>{day}</b>")
+                hover_row.append(f"Date: {year}-{month:02d}-{day:02d}<br>Reports Filed: {count}")
+        z_matrix.append(z_row)
+        text_matrix.append(text_row)
+        hover_matrix.append(hover_row)
+
+    days_header = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    week_labels = [f"W{i + 1}" for i in range(len(month_cal))]
+
+    # Build heatmap
+    fig = px.imshow(
+        z_matrix,
+        x=days_header,
+        y=week_labels,
+        color_continuous_scale="Reds",
+        labels={"color": "Reports Logged"},
+        title=f"Activity & Filing Heatmap — {calendar.month_name[month]} {year}",
+    )
+
+    fig.update_traces(
+        text=text_matrix,
+        texttemplate="%{text}",
+        hovertext=hover_matrix,
+        hoverinfo="text",
+        textfont_size=12,
+        xgap=4,
+        ygap=4,
+    )
+
+    fig.update_layout(
+        height=340,
+        margin=dict(l=20, r=20, t=40, b=20),
+        xaxis=dict(side="top"),
+        yaxis=dict(autorange="reversed", showticklabels=False),
+        coloraxis_colorbar=dict(title="Reports", thickness=14, len=0.8),
+    )
+
+    return fig
 
 # Top Dashboard Selector Toggle
 dashboard_view = st.radio(
@@ -245,62 +321,135 @@ if dashboard_view == "📊 Analytics":
                     fig_weather.update_traces(textposition="inside", textinfo="percent+label")
                     st.plotly_chart(fig_weather, use_container_width=True)
 
+# --- 4. Monthly Activity & Filing Calendar ---
+            st.markdown("---")
+            st.subheader("🗓️ Daily Activity Calendar")
+
+            # Extract available months for selection
+            valid_cal_dates = project_df["Parsed Date"].dropna()
+            if not valid_cal_dates.empty:
+                cal_months = sorted(valid_cal_dates.dt.strftime("%Y-%m").unique(), reverse=True)
+                sel_cal_month = st.selectbox(
+                    "Select Month for Activity View", 
+                    cal_months, 
+                    key="cal_month_picker"
+                )
+                
+                cal_fig = build_monthly_calendar_heatmap(
+                    project_df["Parsed Date"], 
+                    sel_cal_month
+                )
+                st.plotly_chart(cal_fig, use_container_width=True)
+                
+                # Legend note
+                st.caption("🔴 **Color Density:** Darker red indicates higher report volume on that day. Blank/White cells indicate non-month days or zero logs filed (weekends/days off).")
+            else:
+                st.info("No dated activity logs found to build the calendar.")
+    
     with tab_raw:
         st.subheader("Raw Submission Table")
         st.dataframe(project_df, use_container_width=True)
 
 
 # =========================================================
-# DASHBOARD 2: CREW (Personnel & Submitter Hours)
+# DASHBOARD 2: CREW (Personnel & Pay Period Hours)
 # =========================================================
 elif dashboard_view == "👷 Crew":
     crew_df = df.copy()
     crew_df["Numeric_Hours"] = pd.to_numeric(crew_df.get("Man Hours", 0), errors="coerce").fillna(0)
     crew_df["Submitter"] = crew_df.get("Name and Title", "Unknown").astype(str).str.strip()
 
-    total_crew_hours = crew_df["Numeric_Hours"].sum()
-    unique_crew_members = crew_df["Submitter"].nunique()
-    avg_hours_per_log = crew_df["Numeric_Hours"].mean() if len(crew_df) > 0 else 0
+    # Drop records with invalid or missing dates for accurate period filtering
+    valid_dates_df = crew_df.dropna(subset=["Parsed Date"]).copy()
 
+    # Create Month identifier (e.g., '2026-08') and Day of Month
+    valid_dates_df["Year_Month"] = valid_dates_df["Parsed Date"].dt.strftime("%Y-%m")
+    valid_dates_df["Day"] = valid_dates_df["Parsed Date"].dt.day
+
+    # Categorize into pay periods: 1st–15th and 16th–End
+    valid_dates_df["Pay_Period"] = valid_dates_df["Day"].apply(
+        lambda d: "1st – 15th" if d <= 15 else "16th – End"
+    )
+
+    # Top Month Selector
+    available_months = sorted(valid_dates_df["Year_Month"].unique(), reverse=True)
+    
+    if available_months:
+        selected_month = st.selectbox("Select Month for Pay Period Breakdown", available_months)
+        month_filtered_df = valid_dates_df[valid_dates_df["Year_Month"] == selected_month].copy()
+    else:
+        selected_month = "No Data"
+        month_filtered_df = valid_dates_df.copy()
+
+    # Calculate Period Hours for Selected Month
+    p1_hours = month_filtered_df[month_filtered_df["Pay_Period"] == "1st – 15th"]["Numeric_Hours"].sum()
+    p2_hours = month_filtered_df[month_filtered_df["Pay_Period"] == "16th – End"]["Numeric_Hours"].sum()
+    month_total_hours = p1_hours + p2_hours
+
+    # Metrics Row
     c1, c2, c3 = st.columns(3)
-    c1.metric("Total Man-Hours Logged", f"{total_crew_hours:,.1f} hrs")
-    c2.metric("Active Field Submitter(s)", unique_crew_members)
-    c3.metric("Average Hours / Log", f"{avg_hours_per_log:.1f} hrs")
+    c1.metric(f"Total Hours ({selected_month})", f"{month_total_hours:,.1f} hrs")
+    c2.metric("Period 1 (1st – 15th)", f"{p1_hours:,.1f} hrs")
+    c3.metric("Period 2 (16th – End)", f"{p2_hours:,.1f} hrs")
 
     st.markdown("---")
-    st.subheader("Man-Hours Breakdown by Submitter")
+    st.subheader(f"Crew Hours Breakdown by Half-Month ({selected_month})")
 
-    crew_summary = crew_df.groupby("Submitter").agg(
-        Total_Hours=("Numeric_Hours", "sum"),
-        Total_Reports=("Current Date", "count"),
-        Projects_Covered=("Project Name", lambda x: ", ".join(sorted(set(str(p) for p in x.dropna()))))
-    ).reset_index().sort_values(by="Total_Hours", ascending=False)
+    if not month_filtered_df.empty:
+        # Pivot table: Submitter x Pay_Period
+        pivot_periods = month_filtered_df.pivot_table(
+            index="Submitter",
+            columns="Pay_Period",
+            values="Numeric_Hours",
+            aggfunc="sum",
+            fill_value=0
+        ).reset_index()
 
-    col_chart, col_table = st.columns([1, 1])
+        # Ensure both columns exist even if no logs are in one period
+        if "1st – 15th" not in pivot_periods.columns:
+            pivot_periods["1st – 15th"] = 0.0
+        if "16th – End" not in pivot_periods.columns:
+            pivot_periods["16th – End"] = 0.0
 
-    with col_chart:
-        fig_crew = px.bar(
-            crew_summary,
-            x="Submitter",
-            y="Total_Hours",
-            title="Total Hours Logged per Submitter",
-            text="Total_Hours",
-            labels={"Total_Hours": "Hours", "Submitter": "Crew Member"}
-        )
-        fig_crew.update_traces(texttemplate="%{text:.1f}h", textposition="outside")
-        st.plotly_chart(fig_crew, use_container_width=True)
+        pivot_periods["Total Month Hours"] = pivot_periods["1st – 15th"] + pivot_periods["16th – End"]
+        pivot_periods = pivot_periods.sort_values(by="Total Month Hours", ascending=False)
 
-    with col_table:
-        st.write("#### Submitter Summary Table")
-        st.dataframe(
-            crew_summary.rename(columns={
-                "Submitter": "Crew Lead / Submitter",
-                "Total_Hours": "Total Man-Hours",
-                "Total_Reports": "Logs Filed",
-                "Projects_Covered": "Projects Worked"
-            }),
-            use_container_width=True
-        )
+        col_chart, col_table = st.columns([1.1, 0.9])
+
+        with col_chart:
+            # Grouped bar chart comparing periods per worker
+            plot_df = month_filtered_df.groupby(["Submitter", "Pay_Period"])["Numeric_Hours"].sum().reset_index()
+            fig_period = px.bar(
+                plot_df,
+                x="Submitter",
+                y="Numeric_Hours",
+                color="Pay_Period",
+                barmode="group",
+                title=f"Hours per Pay Period by Crew Member ({selected_month})",
+                labels={"Numeric_Hours": "Hours", "Submitter": "Crew Member", "Pay_Period": "Period"},
+                color_discrete_map={"1st – 15th": "#3b82f6", "16th – End": "#10b981"}
+            )
+            fig_period.update_layout(legend_title_text="")
+            st.plotly_chart(fig_period, use_container_width=True)
+
+        with col_table:
+            st.write("#### Pay Period Summary Table")
+            display_table = pivot_periods.rename(columns={
+                "Submitter": "Crew Member",
+                "1st – 15th": "1st – 15th (Hrs)",
+                "16th – End": "16th – End (Hrs)",
+                "Total Month Hours": "Month Total (Hrs)"
+            })
+            st.dataframe(
+                display_table.style.format({
+                    "1st – 15th (Hrs)": "{:.1f}",
+                    "16th – End (Hrs)": "{:.1f}",
+                    "Month Total (Hrs)": "{:.1f}"
+                }),
+                use_container_width=True
+            )
+    else:
+        st.info("No dated entries logged for this month.")
 
 
 # =========================================================
@@ -328,7 +477,7 @@ elif dashboard_view == "🛠️ Equipment":
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Equipment Deployed", total_tool_deployments)
     c2.metric("Most Used Equipment", most_used_tool, delta=f"{most_used_count} site-days", delta_color="off")
-    c3.metric("Top Equipment Project", top_project_name, delta=f"{top_project_count} equipment-days", delta_color="off")
+    c3.metric("Top Equipment Project", top_project_name, delta=f"{top_project_count} site-days", delta_color="off")
 
     st.markdown("---")
     st.subheader("Equipment Usage & Allocation")
