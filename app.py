@@ -163,37 +163,38 @@ def on_toggle_change():
 valid_dates = df["Parsed Date"].dropna()
 available_months = sorted(valid_dates.dt.strftime("%Y-%m").unique(), reverse=True) if not valid_dates.empty else []
 
-# Row A: Centered Month Picker + All-Time Toggle
-ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([1, 1.4, 1])
+# Row A: Compact Centered Time Scope (Month Picker + All-Time Toggle)
+_, ctrl_center, _ = st.columns([1.2, 1.0, 1.2])
 
-with ctrl_col2:
-    sub_c1, sub_c2 = st.columns([1.2, 1])
+with ctrl_center:
+    sub_c1, sub_c2 = st.columns([1.0, 0.9])
+    
+    with sub_c1:
+        if available_months:
+            selected_month = st.selectbox(
+                "Filter Month",
+                available_months,
+                disabled=st.session_state["saved_all_time_state"],
+                key="analytics_month_picker"
+            )
+        else:
+            selected_month = None
+            st.selectbox("Filter Month", ["No Data"], disabled=True)
+
     with sub_c2:
-        st.write("")  # Vertical spacing spacer
+        st.write("")  # Vertical spacing to align with input field
         st.write("")
         all_time_toggle = st.toggle(
-            "View All-Time",
+            "All-Time",
             value=st.session_state["saved_all_time_state"],
             key="analytics_all_time_widget",
             on_change=on_toggle_change
         )
 
-    with sub_c1:
-        if available_months:
-            selected_month = st.selectbox(
-                "Filter by Specific Month",
-                available_months,
-                disabled=all_time_toggle,
-                key="analytics_month_picker"
-            )
-        else:
-            selected_month = None
-            st.selectbox("Filter by Specific Month", ["No Data"], disabled=True)
+# Row B: Centered Dashboard View Selector (Matching column width)
+_, dash_center, _ = st.columns([1.2, 1.0, 1.2])
 
-# 3. Row B: Centered Dashboard View Selector
-dash_c1, dash_c2, dash_c3 = st.columns([1, 1.4, 1])
-
-with dash_c2:
+with dash_center:
     dashboard_view = st.radio(
         "Select Dashboard View",
         ["📊 Analytics", "👷 Crew", "🛠️ Equipment"],
