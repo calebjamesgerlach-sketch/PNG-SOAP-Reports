@@ -148,13 +148,58 @@ def build_monthly_calendar_heatmap(date_series, year_month_str):
     return fig
 
 
-# Top Dashboard Selector Toggle
-dashboard_view = st.radio(
-    "Select Dashboard View",
-    ["📊 Analytics", "👷 Crew", "🛠️ Equipment"],
-    horizontal=True,
-    label_visibility="collapsed"
-)
+# =========================================================
+# GLOBAL CONTROLS: TIME SCOPE & DASHBOARD SWITCHER
+# =========================================================
+
+# 1. State Persistence setup for All-Time toggle
+if "saved_all_time_state" not in st.session_state:
+    st.session_state["saved_all_time_state"] = True
+
+def on_toggle_change():
+    st.session_state["saved_all_time_state"] = st.session_state["analytics_all_time_widget"]
+
+# 2. Extract unique available months from the full dataset
+valid_dates = df["Parsed Date"].dropna()
+available_months = sorted(valid_dates.dt.strftime("%Y-%m").unique(), reverse=True) if not valid_dates.empty else []
+
+# Row A: Centered Month Picker + All-Time Toggle
+ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([1, 1.4, 1])
+
+with ctrl_col2:
+    sub_c1, sub_c2 = st.columns([1.2, 1])
+    with sub_c2:
+        st.write("")  # Vertical spacing spacer
+        st.write("")
+        all_time_toggle = st.toggle(
+            "View All-Time",
+            value=st.session_state["saved_all_time_state"],
+            key="analytics_all_time_widget",
+            on_change=on_toggle_change
+        )
+
+    with sub_c1:
+        if available_months:
+            selected_month = st.selectbox(
+                "Filter by Specific Month",
+                available_months,
+                disabled=all_time_toggle,
+                key="analytics_month_picker"
+            )
+        else:
+            selected_month = None
+            st.selectbox("Filter by Specific Month", ["No Data"], disabled=True)
+
+# 3. Row B: Centered Dashboard View Selector
+dash_c1, dash_c2, dash_c3 = st.columns([1, 1.4, 1])
+
+with dash_c2:
+    dashboard_view = st.radio(
+        "Select Dashboard View",
+        ["📊 Analytics", "👷 Crew", "🛠️ Equipment"],
+        horizontal=True,
+        label_visibility="collapsed"
+    )
 
 st.markdown("---")
 
@@ -162,53 +207,13 @@ st.markdown("---")
 # DASHBOARD 1: ANALYTICS (Master Roll-up & CQI Dashboard)
 # =========================================================
 if dashboard_view == "📊 Analytics":
-    # 1. State Persistence setup
-    if "saved_all_time_state" not in st.session_state:
-        st.session_state["saved_all_time_state"] = True
-
-    def on_toggle_change():
-        st.session_state["saved_all_time_state"] = st.session_state["analytics_all_time_widget"]
-
-    # 2. Extract unique available months
-    valid_dates = df["Parsed Date"].dropna()
-    available_months = sorted(valid_dates.dt.strftime("%Y-%m").unique(), reverse=True) if not valid_dates.empty else []
-
-    # 3. Controls UI: Centered Month Picker + All-Time Toggle
-    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([1, 1.3, 1])
-
-    with ctrl_col2:
-        sub_c1, sub_c2 = st.columns([1.2, 1])
-        with sub_c2:
-            st.write("")
-            st.write("")
-            all_time_toggle = st.toggle(
-                "View All-Time",
-                value=st.session_state["saved_all_time_state"],
-                key="analytics_all_time_widget",
-                on_change=on_toggle_change
-            )
-
-        with sub_c1:
-            if available_months:
-                selected_month = st.selectbox(
-                    "Filter by Specific Month",
-                    available_months,
-                    disabled=all_time_toggle,
-                    key="analytics_month_picker"
-                )
-            else:
-                selected_month = None
-                st.selectbox("Filter by Specific Month", ["No Data"], disabled=True)
-
-    # 4. Scope the dataframe based on user choice
+    # Scope the dataframe based on global time selection
     if all_time_toggle or not selected_month:
         scoped_df = df.copy()
         time_label = "All-Time"
     else:
         scoped_df = df[df["Parsed Date"].dt.strftime("%Y-%m") == selected_month].copy()
         time_label = f"Month: {selected_month}"
-
-    st.markdown("---")
 
     # Macro KPIs
     col1, col2, col3 = st.columns(3)
@@ -392,13 +397,18 @@ elif dashboard_view == "👷 Crew":
         lambda d: "1st – 15th" if d <= 15 else "16th – End"
     )
 
-    available_months = sorted(valid_dates_df["Year_Month"].unique(), reverse=True)
+    crew_months = sorted(valid_dates_df["Year_Month"].unique(), reverse=True)
     
-    if available_months:
-        selected_month = st.selectbox("Select Month for Pay Period Breakdown", available_months)
-        month_filtered_df = valid_dates_df[valid_dates_df["Year_Month"] == selected_month].copy()
+    # Pre-select month based on global month picker if active, otherwise fallback to most recent
+    default_ix = 0
+    if not all_time_toggle and selected_month and selected_month in crew_months:
+        default_ix = crew_months.index(selected_month)
+
+    if crew_months:
+        active_crew_month = st.selectbox("Select Month for Pay Period Breakdown", crew_months, index=default_ix)
+        month_filtered_df = valid_dates_df[valid_dates_df["Year_Month"] == active_crew_month].copy()
     else:
-        selected_month = "No Data"
+        active_crew_month = "No Data"
         month_filtered_df = valid_dates_df.copy()
 
     p1_hours = month_filtered_df[month_filtered_df["Pay_Period"] == "1st – 15th"]["Numeric_Hours"].sum()
@@ -406,12 +416,12 @@ elif dashboard_view == "👷 Crew":
     month_total_hours = p1_hours + p2_hours
 
     c1, c2, c3 = st.columns(3)
-    c1.metric(f"Total Hours ({selected_month})", f"{month_total_hours:,.1f} hrs")
+    c1.metric(f"Total Hours ({active_crew_month})", f"{month_total_hours:,.1f} hrs")
     c2.metric("Period 1 (1st – 15th)", f"{p1_hours:,.1f} hrs")
     c3.metric("Period 2 (16th – End)", f"{p2_hours:,.1f} hrs")
 
     st.markdown("---")
-    st.subheader(f"Crew Hours Breakdown by Half-Month ({selected_month})")
+    st.subheader(f"Crew Hours Breakdown by Half-Month ({active_crew_month})")
 
     if not month_filtered_df.empty:
         pivot_periods = month_filtered_df.pivot_table(
@@ -440,7 +450,7 @@ elif dashboard_view == "👷 Crew":
                 y="Numeric_Hours",
                 color="Pay_Period",
                 barmode="group",
-                title=f"Hours per Pay Period by Crew Member ({selected_month})",
+                title=f"Hours per Pay Period by Crew Member ({active_crew_month})",
                 labels={"Numeric_Hours": "Hours", "Submitter": "Crew Member", "Pay_Period": "Period"},
                 color_discrete_map={"1st – 15th": "#3b82f6", "16th – End": "#10b981"}
             )
@@ -471,7 +481,15 @@ elif dashboard_view == "👷 Crew":
 # DASHBOARD 3: EQUIPMENT (Tools & Deployment Metrics)
 # =========================================================
 elif dashboard_view == "🛠️ Equipment":
-    df_tools = extract_unique_tools_df(df)
+    # Respect global time selection for equipment
+    if all_time_toggle or not selected_month:
+        equip_scoped_df = df.copy()
+        equip_time_label = "All-Time"
+    else:
+        equip_scoped_df = df[df["Parsed Date"].dt.strftime("%Y-%m") == selected_month].copy()
+        equip_time_label = f"Month: {selected_month}"
+
+    df_tools = extract_unique_tools_df(equip_scoped_df)
 
     total_tool_deployments = len(df_tools)
     
@@ -490,12 +508,12 @@ elif dashboard_view == "🛠️ Equipment":
         top_project_count = 0
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Total Equipment Days Deployed", total_tool_deployments)
-    c2.metric("Most Used Equipment", most_used_tool, delta=f"{most_used_count} site-days", delta_color="off")
-    c3.metric("Top Equipment Project", top_project_name, delta=f"{top_project_count} equipment-days", delta_color="off")
+    c1.metric(f"Total Equipment Days Deployed ({equip_time_label})", total_tool_deployments)
+    c2.metric(f"Most Used Equipment ({equip_time_label})", most_used_tool, delta=f"{most_used_count} site-days", delta_color="off")
+    c3.metric(f"Top Equipment Project ({equip_time_label})", top_project_name, delta=f"{top_project_count} equipment-days", delta_color="off")
 
     st.markdown("---")
-    st.subheader("Equipment Usage & Allocation (Deduplicated per Day)")
+    st.subheader(f"Equipment Usage & Allocation ({equip_time_label})")
 
     if not df_tools.empty:
         col_tool_chart, col_proj_chart = st.columns(2)
@@ -507,7 +525,7 @@ elif dashboard_view == "🛠️ Equipment":
                 x="Deployments",
                 y="Tool",
                 orientation="h",
-                title="Equipment Frequency (Total Days on Site)",
+                title=f"Equipment Frequency — {equip_time_label}",
                 text="Deployments"
             )
             fig_tools.update_traces(textposition="outside")
@@ -520,9 +538,9 @@ elif dashboard_view == "🛠️ Equipment":
                 x="Project Name",
                 y="Deployments",
                 color="Tool",
-                title="Equipment Days by Project",
+                title=f"Equipment Days by Project — {equip_time_label}",
                 barmode="stack"
             )
             st.plotly_chart(fig_proj_tools, use_container_width=True)
     else:
-        st.info("No equipment deployments recorded in any daily logs yet.")
+        st.info("No equipment deployments recorded in this time range.")
